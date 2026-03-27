@@ -8,6 +8,9 @@ skip-lint = false
 [programs.localnet]
 crowdfunding = "EHu6sPptBWXmRCWYeaC36UhCsze99DjYWwJL3rqKDyW5"
 
+[programs.devnet]
+crowdfunding = "EHu6sPptBWXmRCWYeaC36UhCsze99DjYWwJL3rqKDyW5"
+
 [registry]
 url = "https://api.apr.dev"
 
