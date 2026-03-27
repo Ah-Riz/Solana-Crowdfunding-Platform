@@ -263,7 +263,6 @@ describe("crowdfunding", () => {
             campaign: campaignKp.publicKey,
             vault,
             creator: creator.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
           .rpc(),
       "CampaignNotEnded"
@@ -280,7 +279,6 @@ describe("crowdfunding", () => {
             contribution,
             vault,
             donor: donor.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
           .signers([donor])
           .rpc(),
@@ -325,7 +323,6 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
         campaign: campaignKp.publicKey,
         vault,
         creator: creator.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
       })
       .rpc();
 
@@ -345,7 +342,6 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
             campaign: campaignKp.publicKey,
             vault,
             creator: creator.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
           .rpc(),
       "AlreadyClaimed"
@@ -381,7 +377,6 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
             campaign: freshCampaign.publicKey,
             vault: freshVault,
             creator: imposter.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
           .signers([imposter])
           .rpc(),
@@ -428,7 +423,6 @@ describe("crowdfunding – failed campaign (refund)", () => {
         contribution,
         vault,
         donor: donor.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
       })
       .signers([donor])
       .rpc();
@@ -474,7 +468,6 @@ describe("crowdfunding – failed campaign (refund)", () => {
             contribution: fundedContribution,
             vault: fundedVault,
             donor: fundedDonor.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
           .signers([fundedDonor])
           .rpc(),
@@ -491,7 +484,6 @@ describe("crowdfunding – failed campaign (refund)", () => {
             campaign: campaignKp.publicKey,
             vault,
             creator: creator.publicKey,
-            systemProgram: anchor.web3.SystemProgram.programId,
           })
           .rpc(),
       "GoalNotReached"

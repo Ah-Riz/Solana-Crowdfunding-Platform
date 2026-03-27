@@ -112,15 +112,12 @@ pub mod crowdfunding {
         );
         require!(campaign.raised >= campaign.goal, CrowdfundError::GoalNotReached);
 
-        let amount = ctx.accounts.vault.lamports();
+        let amount = campaign.raised;
         let campaign_key = ctx.accounts.campaign.key();
 
         transfer_from_vault(
-            &ctx.accounts.vault,
-            &ctx.accounts.creator,
-            &ctx.accounts.system_program,
-            &campaign_key,
-            campaign.bump,
+            &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.creator.to_account_info(),
             amount,
         )?;
 
@@ -159,11 +156,8 @@ pub mod crowdfunding {
         let campaign_key = ctx.accounts.campaign.key();
 
         transfer_from_vault(
-            &ctx.accounts.vault,
-            &ctx.accounts.donor,
-            &ctx.accounts.system_program,
-            &campaign_key,
-            campaign.bump,
+            &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.donor.to_account_info(),
             amount,
         )?;
 
@@ -189,30 +183,20 @@ pub mod crowdfunding {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Transfers lamports from the vault PDA to a recipient via CPI.
+/// Transfers lamports from the vault PDA to a recipient via direct lamport manipulation.
 ///
-/// The vault is a SystemAccount whose address is derived from
-/// `[VAULT_SEED, campaign_key]`. This helper encapsulates the
-/// `invoke_signed` pattern so callers don't rebuild the signer seeds.
+/// Because the vault is a program-owned account (not a SystemAccount), we can
+/// directly adjust lamport balances without a CPI to the System Program. This
+/// avoids the rent-exempt minimum check that `system_program::transfer` enforces,
+/// allowing us to fully drain the vault on withdraw/refund.
 fn transfer_from_vault<'info>(
     vault: &AccountInfo<'info>,
     recipient: &AccountInfo<'info>,
-    system_program: &AccountInfo<'info>,
-    campaign_key: &Pubkey,
-    bump: u8,
     amount: u64,
 ) -> Result<()> {
-    system_program::transfer(
-        CpiContext::new_with_signer(
-            system_program.to_account_info(),
-            system_program::Transfer {
-                from: vault.to_account_info(),
-                to: recipient.to_account_info(),
-            },
-            &[&[VAULT_SEED, campaign_key.as_ref(), &[bump]]],
-        ),
-        amount,
-    )
+    **vault.try_borrow_mut_lamports()? -= amount;
+    **recipient.try_borrow_mut_lamports()? += amount;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -229,12 +213,15 @@ pub struct CreateCampaign<'info> {
     pub campaign: Account<'info, Campaign>,
 
     /// Vault PDA that holds campaign funds. Derived from the campaign key.
+    /// Program-owned so we can fully drain it via direct lamport manipulation.
     #[account(
-        mut,
+        init,
+        payer = creator,
+        space = 8 + Vault::INIT_SPACE,
         seeds = [VAULT_SEED, campaign.key().as_ref()],
         bump,
     )]
-    pub vault: SystemAccount<'info>,
+    pub vault: Account<'info, Vault>,
 
     #[account(mut)]
     pub creator: Signer<'info>,
@@ -252,6 +239,10 @@ pub struct Contribute<'info> {
 
     /// Per-donor contribution tracker. Created on first contribution,
     /// updated (amount accumulated) on subsequent contributions.
+    ///
+    /// SAFETY: `init_if_needed` is safe here because contribute requires
+    /// `clock < deadline`, while refund (which closes this account) requires
+    /// `clock >= deadline`. A donor cannot re-initialize after a refund.
     #[account(
         init_if_needed,
         payer = donor,
@@ -267,7 +258,7 @@ pub struct Contribute<'info> {
         seeds = [VAULT_SEED, campaign.key().as_ref()],
         bump = campaign.bump,
     )]
-    pub vault: SystemAccount<'info>,
+    pub vault: Account<'info, Vault>,
 
     #[account(mut)]
     pub donor: Signer<'info>,
@@ -284,18 +275,16 @@ pub struct Withdraw<'info> {
     )]
     pub campaign: Account<'info, Campaign>,
 
-    /// Vault PDA that holds campaign funds.
+    /// Vault PDA — program-owned, so no System Program needed for transfers out.
     #[account(
         mut,
         seeds = [VAULT_SEED, campaign.key().as_ref()],
         bump = campaign.bump,
     )]
-    pub vault: SystemAccount<'info>,
+    pub vault: Account<'info, Vault>,
 
     #[account(mut)]
     pub creator: Signer<'info>,
-
-    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -314,23 +303,31 @@ pub struct Refund<'info> {
     )]
     pub contribution: Account<'info, Contribution>,
 
-    /// Vault PDA that holds campaign funds.
+    /// Vault PDA — program-owned, so no System Program needed for transfers out.
     #[account(
         mut,
         seeds = [VAULT_SEED, campaign.key().as_ref()],
         bump = campaign.bump,
     )]
-    pub vault: SystemAccount<'info>,
+    pub vault: Account<'info, Vault>,
 
     #[account(mut)]
     pub donor: Signer<'info>,
-
-    pub system_program: Program<'info, System>,
 }
 
 // ---------------------------------------------------------------------------
 // State accounts
 // ---------------------------------------------------------------------------
+
+/// Empty program-owned account used as the campaign vault.
+///
+/// By making this a program-owned account (rather than a SystemAccount),
+/// we can transfer lamports out via direct manipulation (`try_borrow_mut_lamports`)
+/// without the System Program's rent-exempt minimum check. This lets us
+/// fully drain the vault on withdraw and refund.
+#[account]
+#[derive(InitSpace)]
+pub struct Vault {}
 
 /// On-chain state for a crowdfunding campaign.
 #[account]
