@@ -44,8 +44,15 @@ function deriveContribution(
 // ---------------------------------------------------------------------------
 
 async function airdrop(to: PublicKey, amount: number) {
-  const sig = await connection.requestAirdrop(to, amount);
-  await connection.confirmTransaction(sig);
+  // Use the provider wallet to fund the account instead of the faucet
+  const transaction = new anchor.web3.Transaction().add(
+    anchor.web3.SystemProgram.transfer({
+      fromPubkey: provider.wallet.publicKey,
+      toPubkey: to,
+      lamports: amount,
+    })
+  );
+  await provider.sendAndConfirm(transaction);
 }
 
 async function getCurrentBlockTime(): Promise<number> {
@@ -122,17 +129,17 @@ const sleep = (seconds: number) =>
 describe("crowdfunding", () => {
   const campaignKp = Keypair.generate();
   const donor = Keypair.generate();
-  const goal = new anchor.BN(1000 * LAMPORTS_PER_SOL);
+  const goal = new anchor.BN(0.1 * LAMPORTS_PER_SOL);
 
   let vault: PublicKey;
   let contribution: PublicKey;
 
   before(async () => {
-    await airdrop(donor.publicKey, 2000 * LAMPORTS_PER_SOL);
+    await airdrop(donor.publicKey, 0.2 * LAMPORTS_PER_SOL);
   });
 
   it("Creates a campaign", async () => {
-    const result = await setupCampaign(campaignKp, goal, 10);
+    const result = await setupCampaign(campaignKp, goal, 60);
     vault = result.vault;
     [contribution] = deriveContribution(campaignKp.publicKey, donor.publicKey);
 
@@ -185,7 +192,7 @@ describe("crowdfunding", () => {
   });
 
   it("Accepts a contribution", async () => {
-    const amount = new anchor.BN(600 * LAMPORTS_PER_SOL);
+    const amount = new anchor.BN(0.05 * LAMPORTS_PER_SOL);
 
     await program.methods
       .contribute(amount)
@@ -208,7 +215,7 @@ describe("crowdfunding", () => {
   });
 
   it("Accepts a second contribution from the same donor (accumulates)", async () => {
-    const amount = new anchor.BN(200 * LAMPORTS_PER_SOL);
+    const amount = new anchor.BN(0.05 * LAMPORTS_PER_SOL);
 
     await program.methods
       .contribute(amount)
@@ -223,15 +230,15 @@ describe("crowdfunding", () => {
       .rpc();
 
     const acct = await program.account.campaign.fetch(campaignKp.publicKey);
-    assert.ok(acct.raised.eq(new anchor.BN(800 * LAMPORTS_PER_SOL)));
+    assert.ok(acct.raised.eq(new anchor.BN(0.1 * LAMPORTS_PER_SOL)));
 
     const contrib = await program.account.contribution.fetch(contribution);
-    assert.ok(contrib.amount.eq(new anchor.BN(800 * LAMPORTS_PER_SOL)));
+    assert.ok(contrib.amount.eq(new anchor.BN(0.1 * LAMPORTS_PER_SOL)));
   });
 
   it("Rejects zero-amount contribution", async () => {
     const zeroDonor = Keypair.generate();
-    await airdrop(zeroDonor.publicKey, 10 * LAMPORTS_PER_SOL);
+    await airdrop(zeroDonor.publicKey, 0.2 * LAMPORTS_PER_SOL);
     const [zeroContribution] = deriveContribution(
       campaignKp.publicKey,
       zeroDonor.publicKey
@@ -264,6 +271,7 @@ describe("crowdfunding", () => {
             vault,
             creator: creator.publicKey,
           })
+          .signers([])
           .rpc(),
       "CampaignNotEnded"
     );
@@ -294,26 +302,26 @@ describe("crowdfunding", () => {
 describe("crowdfunding – successful campaign (withdraw)", () => {
   const campaignKp = Keypair.generate();
   const donor = Keypair.generate();
-  const goal = new anchor.BN(100 * LAMPORTS_PER_SOL);
+  const goal = new anchor.BN(0.1 * LAMPORTS_PER_SOL);
 
   let vault: PublicKey;
 
   before(async () => {
-    await airdrop(donor.publicKey, 200 * LAMPORTS_PER_SOL);
+    await airdrop(donor.publicKey, 0.2 * LAMPORTS_PER_SOL);
   });
 
   it("Funds campaign above goal, then creator withdraws after deadline", async () => {
-    const result = await setupCampaign(campaignKp, goal, 2);
+    const result = await setupCampaign(campaignKp, goal, 15);
     vault = result.vault;
 
     await fundCampaign(
       campaignKp.publicKey,
       vault,
       donor,
-      new anchor.BN(150 * LAMPORTS_PER_SOL)
+      new anchor.BN(0.15 * LAMPORTS_PER_SOL)
     );
 
-    await sleep(3);
+    await sleep(16);
 
     const balBefore = await connection.getBalance(creator.publicKey);
 
@@ -324,6 +332,7 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
         vault,
         creator: creator.publicKey,
       })
+      .signers([])
       .rpc();
 
     const balAfter = await connection.getBalance(creator.publicKey);
@@ -343,6 +352,7 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
             vault,
             creator: creator.publicKey,
           })
+          .signers([])
           .rpc(),
       "AlreadyClaimed"
     );
@@ -352,21 +362,21 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
     const freshCampaign = Keypair.generate();
     const imposter = Keypair.generate();
 
-    await airdrop(imposter.publicKey, 200 * LAMPORTS_PER_SOL);
+    await airdrop(imposter.publicKey, 0.2 * LAMPORTS_PER_SOL);
 
     const { vault: freshVault } = await setupCampaign(
       freshCampaign,
-      new anchor.BN(10 * LAMPORTS_PER_SOL),
-      2
+      new anchor.BN(0.1 * LAMPORTS_PER_SOL),
+      15
     );
     await fundCampaign(
       freshCampaign.publicKey,
       freshVault,
       imposter,
-      new anchor.BN(20 * LAMPORTS_PER_SOL)
+      new anchor.BN(0.1 * LAMPORTS_PER_SOL)
     );
 
-    await sleep(3);
+    await sleep(16);
 
     // Imposter tries to withdraw — should fail (has_one = creator)
     await expectError(
@@ -392,27 +402,27 @@ describe("crowdfunding – successful campaign (withdraw)", () => {
 describe("crowdfunding – failed campaign (refund)", () => {
   const campaignKp = Keypair.generate();
   const donor = Keypair.generate();
-  const goal = new anchor.BN(1000 * LAMPORTS_PER_SOL);
+  const goal = new anchor.BN(1 * LAMPORTS_PER_SOL);
 
   let vault: PublicKey;
   let contribution: PublicKey;
 
   before(async () => {
-    await airdrop(donor.publicKey, 200 * LAMPORTS_PER_SOL);
+    await airdrop(donor.publicKey, 0.2 * LAMPORTS_PER_SOL);
   });
 
   it("Refunds donor after failed campaign and closes contribution account", async () => {
-    const result = await setupCampaign(campaignKp, goal, 2);
+    const result = await setupCampaign(campaignKp, goal, 15);
     vault = result.vault;
 
     contribution = await fundCampaign(
       campaignKp.publicKey,
       vault,
       donor,
-      new anchor.BN(100 * LAMPORTS_PER_SOL)
+      new anchor.BN(0.1 * LAMPORTS_PER_SOL)
     );
 
-    await sleep(3);
+    await sleep(16);
 
     const balBefore = await connection.getBalance(donor.publicKey);
 
@@ -443,21 +453,21 @@ describe("crowdfunding – failed campaign (refund)", () => {
     const fundedCampaign = Keypair.generate();
     const fundedDonor = Keypair.generate();
 
-    await airdrop(fundedDonor.publicKey, 50 * LAMPORTS_PER_SOL);
+    await airdrop(fundedDonor.publicKey, 0.2 * LAMPORTS_PER_SOL);
 
     const { vault: fundedVault } = await setupCampaign(
       fundedCampaign,
-      new anchor.BN(10 * LAMPORTS_PER_SOL),
-      2
+      new anchor.BN(0.05 * LAMPORTS_PER_SOL),
+      15
     );
     const fundedContribution = await fundCampaign(
       fundedCampaign.publicKey,
       fundedVault,
       fundedDonor,
-      new anchor.BN(20 * LAMPORTS_PER_SOL)
+      new anchor.BN(0.06 * LAMPORTS_PER_SOL)
     );
 
-    await sleep(3);
+    await sleep(16);
 
     await expectError(
       () =>
@@ -485,6 +495,7 @@ describe("crowdfunding – failed campaign (refund)", () => {
             vault,
             creator: creator.publicKey,
           })
+          .signers([])
           .rpc(),
       "GoalNotReached"
     );
